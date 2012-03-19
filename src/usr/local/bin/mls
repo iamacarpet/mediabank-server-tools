@@ -1,0 +1,44 @@
+#!/usr/bin/php
+<?php
+require "/usr/share/mediabank/colours.php";
+
+$clic = new Colors();
+
+if (@$argv[1] != ''){
+        if (is_dir($argv[1])){
+                chdir($argv[1]);
+        } else {
+                die($clic->getColoredString('Invalid Directory', 'red', null) . "\n");
+        }
+}
+$i = 0;
+$files = array();
+$dirs = array();
+if ($handle = opendir(getcwd())) {
+        while (false !== ($file = readdir($handle))) {
+                $i++;
+                if ($file != "." && $file != "..") {
+                        if (is_dir(getcwd() . '/' . $file)){
+                                $dirs[] = $file;
+                        } else {
+                                $files[] = $file;
+                        }
+                }
+        }
+        closedir($handle);
+}
+
+sort($dirs);
+sort($files);
+
+foreach ($dirs as $file){
+        echo $clic->getColoredString(getcwd() . '/', 'purple', null) . $clic->getColoredString($file, 'blue', null) . "\n";
+}
+foreach ($files as $file){
+        echo $clic->getColoredString(getcwd() . '/', 'purple', null) . $clic->getColoredString($file, 'green', null) . "\n";
+}
+
+if (!$i > 0){
+        echo $clic->getColoredString("Empty Directory", 'red', null) . "\n";
+}
+?>

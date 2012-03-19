@@ -1,0 +1,20 @@
+#!/usr/bin/php
+<?php
+
+require "/usr/share/mediabank/crypt.php";
+
+$cryptastic = new cryptastic;
+
+$password = prompt_silent();
+
+sleep(1);
+	
+echo "\n" . 'Password Accepted - Decrypting file:' . "\n\n";
+
+$file = file_get_contents($argv[1]);
+
+$encrypted = $cryptastic->decrypt($file, $password, true);
+
+echo $encrypted;
+    
+?>

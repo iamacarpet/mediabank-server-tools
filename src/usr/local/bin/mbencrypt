@@ -1,0 +1,22 @@
+#!/usr/bin/php
+<?php
+
+require "/usr/share/mediabank/crypt.php";
+         
+$cryptastic = new cryptastic;
+
+$password = prompt_silent();
+
+sleep(1);
+
+echo "\n" . 'Password Accepted, please input text to encrypt: ' . "\n";
+
+$file = file_get_contents("php://stdin", "r");
+        
+$encrypted = $cryptastic->encrypt($file, $password, true);
+
+file_put_contents($argv[1], $encrypted);
+    
+echo "\n" . 'Data written to file.' . "\n";
+
+?>

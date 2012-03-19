@@ -1,0 +1,44 @@
+#!/usr/bin/php
+<?php
+
+require "/usr/share/mediabank/mediabank.php";
+
+$mediaSync = new MediaSync('mbmv');
+
+$mediaSync->logger->init('mbmv', '/var/log/mediabank.log');
+
+if (!is_file($argv[1])){
+    $argv[1] = '/home/media/Downloads/' . $argv[1];
+    if (!is_file($argv[1])){
+        $mediaSync->logger->error('Can\'t find file: ' . $argv[1] , true, true);
+    }
+} else {
+    $argv[1] = realpath($argv[1]);
+}
+
+// Ok, so we've inited and we've got the file - Now to find it in the database.
+// We'll grab the file ID, but also the type of media and it's details - For logging of course.
+
+$sql = "SELECT ID FROM file_files WHERE FileLocation = '" . mysql_real_escape_string($argv[1]) . "' AND ServerID = '" . mysql_real_escape_string($mediaSync->conf->server) . "'";
+$query = mysql_query($sql, $mediaSync->db->db_conn) or $mediaSync->logger->error('Error checking for file in the database', true, true);
+if (mysql_num_rows($query) < 1){
+    $mediaSync->logger->error('Can\'t find file in the database - Are you sure it\'s already been added?', true, true);
+}
+$row = mysql_fetch_row($query);
+
+// So we've found the file ID, lets check if it's a movie.
+$sql = "SELECT ID, Name, UNIX_TIMESTAMP(DateReleased) FROM movie_list WHERE FileID = '" . mysql_real_escape_string($row[0]) . "'";
+$query2 = mysql_query($sql, $mediaSync->db->db_conn) or $mediaSync->logger->error('Error checking is file is a movie', true, true);
+if (mysql_num_rows($query2) < 1){
+    // Looks like that's a no, so lets check if it's a TV Show.
+    $sql = "SELECT a.Name, WHERE a.FileID = '" . mysql_real_escape_string($row[0]) . "'";
+} else {
+    $row2 = mysql_fetch_row($query2);
+    $mediaSync->logger->error('File we\'re going to move is a movie: (ID #' . $row2[0] . ') ' . $row2[1] . ' (' . date('Y', $row2[2]) . ')', false, true);
+}
+
+function moveFile($fileid, $oldl, $newl){
+    
+}
+
+?>

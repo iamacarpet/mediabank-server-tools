@@ -1,0 +1,145 @@
+#!/usr/bin/php
+<?php
+
+require "/usr/share/mediabank/mediabank.php";
+
+$mediaSync = new MediaSync('mbaf');
+
+$mediaSync->logger->init('mbaf', '/var/log/mediabank.log');
+
+if (!is_file($argv[1])){
+    $argv[1] = '/home/media/Downloads/' . $argv[1];
+    if (!is_file($argv[1])){
+        $mediaSync->logger->error('Can\'t find file: ' . $argv[1] , true, true);
+    }
+} else {
+    $argv[1] = realpath($argv[1]);
+}
+
+$ini = parse_ini_file("/etc/rss/mbaf/shows.ini", true, true) or $mediaSync->logger->error('Unable to parse ini file' , true, true);
+
+$filename = basename($argv[1]);
+
+$mediaSync->logger->error("Starting with filename: " . $filename, false, true);
+
+foreach ($ini as $k => $v){
+    if (preg_match("'" . $v['regex'] . "$'i", str_replace('.', ' ', $filename), $h)){
+
+        if (preg_match("'^(.+)S([0-9]+)E([0-9]+).*$'i",$filename,$n)){
+            $sname = preg_replace("'\.'"," ",$n[1]);
+            $season = intval($n[2],10);
+            $episode = intval($n[3],10);
+            $mediaSync->logger->error('   Found info: '. $sname . ' - Season ' . $season . ' - Episode ' . $episode, false, true);
+        } else if (preg_match("'^(.+)[ \.]([0-9]+)x([0-9]+).*$'i",$filename,$n)){
+            $sname = preg_replace("'\.'"," ",$n[1]);
+            $season = intval($n[2],10);
+            $episode = intval($n[3],10);
+            $mediaSync->logger->error('   Found info: ' . $sname . ' ' . $season . ' ' . $episode, false, true);
+        } else {
+            $mediaSync->logger->error('   Can\'t Decode Show Info From Filename', true, true);
+        }
+        
+        $sql = "SELECT ID,tvdb_id FROM tv_shows WHERE ID = '" . mysql_real_escape_string($v['showid']) . "'";
+        $query = mysql_query($sql, $mediaSync->db->db_conn) or $mediaSync->logger->error('   Error Getting Show Details', true, true);
+	    if (! $row = mysql_fetch_row($query)){
+	    	$mediaSync->logger->error('   Invalid Show ID', true, true);
+	    }
+        $show = $row[0];
+        $showid = $row[1];
+        
+        $sql = "SELECT ID FROM tv_seasons WHERE Season = '" . mysql_real_escape_string($season) . "' AND ShowID = '" . mysql_real_escape_string($v['showid']) . "'";
+        $query = mysql_query($sql, $mediaSync->db->db_conn) or $mediaSync->logger->error('   Error Getting Season Details', true, true);
+	    if (! $row = mysql_fetch_row($query)){
+	    	$sql = "INSERT INTO tv_seasons (ShowID, Season) VALUES ( '" . mysql_real_escape_string($show) . "', '" . mysql_real_escape_string($season) . "');";
+            $query = mysql_query($sql, $mediaSync->db->db_conn) or $mediaSync->logger->error('   Error Creating Season', true, true);
+            
+            $seasonid = mysql_insert_id();
+	    } else {
+            $seasonid = $row[0];
+	    }
+        
+        $sql = "SELECT ID FROM tv_episodes WHERE Episode = '" . mysql_real_escape_string($episode) . "' AND SeasonID = '" . mysql_real_escape_string($seasonid) . "'";
+        $query = mysql_query($sql, $mediaSync->db->db_conn) or $mediaSync->logger->error('   Error Getting Episode Unique Details', true, true);
+        if ($row = mysql_fetch_row($query)){
+            $mediaSync->logger->error('   Episode Already Exists in DB', true, true);
+        }
+        
+        libxml_use_internal_errors(true);
+        $xml_string = $mediaSync->func->fetchData('http://thetvdb.com/api/EBED89FE044EA88B/series/' . $showid . '/default/' . $season . '/' . $episode . '/en.xml');
+        $response = simplexml_load_string($xml_string);
+
+        if (!$response){
+            $mediaSync->logger->error('   Unable to get TVDB Info', true, true);
+        }
+
+        $name = $response->Episode->EpisodeName;
+        $date = $response->Episode->FirstAired;
+        $description = $response->Episode->Overview;
+        
+        if (@$v['path'] != ""){
+            if ($season < 10){
+                $seasonfolder = 'Season 0' . $season . '/';
+            } else {
+                $seasonfolder = 'Season ' . $season . '/';
+            }
+            
+            // We're going to move the files into this path...
+            if (substr($v['path'], -1) == '/'){
+                if (!is_dir($v['path'] . $seasonfolder)){
+                    mkdir($v['path'] . $seasonfolder, 0755) or $mediaSync->logger->error('   Unable to create season folder ' . $v['path'] . $seasonfolder, true, true);
+                }
+                $mediaSync->logger->error("   Moving file from " . $argv[1] . " to " . $v['path'] . $seasonfolder . $filename, false, true);
+                rename($argv[1], $v['path'] . $seasonfolder . $filename) or $mediaSync->logger->error('   Unable to move file to ' . $v['path'] . $seasonfolder . $filename, true, true);
+                $argv[1] = $v['path'] . $seasonfolder . $filename;
+            } else {
+                if (!is_dir($v['path'] . '/' . $seasonfolder)){
+                    mkdir($v['path'] . '/' . $seasonfolder, 0755) or $mediaSync->logger->error('   Unable to create season folder ' . $v['path'] . $seasonfolder, true, true);
+                }
+                $mediaSync->logger->error("   Moving file from " . $argv[1] . " to " . $v['path'] . '/' . $seasonfolder . $filename, false, true);
+                rename($argv[1], $v['path'] . '/' . $seasonfolder . $filename) or $mediaSync->logger->error('   Unable to move file to ' . $v['path'] . '/' . $seasonfolder . $filename, true, true);
+                $argv[1] = $v['path'] . '/' . $seasonfolder . $filename;
+            }
+        }
+
+        $ext = end(explode('.', $argv[1]));
+
+        $sql = "INSERT INTO file_files (ServerID, FileLocation, FileExtension, Available) VALUES ( '" . mysql_real_escape_string($mediaSync->conf->server) . "', '" . mysql_real_escape_string($argv[1]) . "', '" . mysql_real_escape_string($ext) . "', 1);";
+
+        $query = mysql_query($sql, $mediaSync->db->db_conn) or $mediaSync->logger->error('   Error Inserting File Info', true, true);
+
+        $sql = "INSERT INTO tv_episodes (SeasonID, Episode, Name, Description, FirstAired, FileID) VALUES ( '" . mysql_real_escape_string($seasonid) . "', '" . mysql_real_escape_string($episode) . "', '" . mysql_real_escape_string($name) . "', '" . mysql_real_escape_string($description) . "', '" . mysql_real_escape_string($date) . "', " . mysql_insert_id($mediaSync->db->db_conn) . ");";
+
+        $query = mysql_query($sql, $mediaSync->db->db_conn) or $mediaSync->logger->error('   Error Inserting Episode Info', true, true);
+        
+        $episode_id = mysql_insert_id($mediaSync->db->db_conn);
+        
+        if (@$argv[2] != 'false'){
+            $sql = "SELECT UserID FROM watch_tv_shows WHERE ShowID = '" . mysql_real_escape_string($v['showid']) . "'";
+            $query3 = mysql_query($sql, $mediaSync->db->db_conn) or $mediaSync->logger->error('   Error Selecting Show Subscriped Users', true, true);
+    	    while ($showrow = mysql_fetch_row($query3)){
+    	    	$sql = "INSERT INTO queue_tv (UserID, EpisodeID, AuthCode) VALUES ( '" . mysql_real_escape_string($showrow[0]) . "', '" . mysql_real_escape_string($episode_id) . "', '" . mysql_real_escape_string($mediaSync->func->genAuthCode()) . "');";
+    	    	$query = mysql_query($sql, $mediaSync->db->db_conn) or $mediaSync->logger->error('   Error Inserting Into Users Queue', true, true);
+	        }
+
+        	$sql = "SELECT UserID FROM watch_tv_seasons WHERE SeasonID = '" . mysql_real_escape_string($season) . "'";
+        	$query3 = mysql_query($sql, $mediaSync->db->db_conn) or $mediaSync->logger->error('   Error Selecting Season Subscribed Users', true, true);
+          	while ($seasonrow = mysql_fetch_row($query3)){
+           		$sql = "INSERT INTO queue_tv (UserID, EpisodeID, AuthCode) VALUES ( '" . mysql_real_escape_string($seasonrow[0]) . "', '" . mysql_real_escape_string($episode_id) . "', '" . mysql_real_escape_string($mediaSync->func->genAuthCode()) . "');";
+        		$query = mysql_query($sql, $mediaSync->db->db_conn) or $mediaSync->logger->error('   Error Inserting Into Users Queue', true, true);
+    	    }
+        }
+        
+        $sql = "UPDATE tv_shows SET Updated = NOW() WHERE ID = '" . mysql_real_escape_string($v['showid']) . "'";
+        $query4 = mysql_query($sql, $mediaSync->db->db_conn) or $mediaSync->logger->error('   Error Updating Show Update Timestamp', true, true);
+        
+        if (@$argv[3] != 'false'){
+            $mediaSync->func->emailNotification($mediaSync->conf->email, 'TV Shows - Episode Added', 'Automated TV Show Submission Service', '<h2>' . $sname . ' - Season ' . $season . ' - Episode ' . $episode . '</h2><br /><i>' . $argv[1] . '</i>') or $mediaSync->logger->error('   Error Sending Notification Email', false, true);
+        }
+        
+        break;
+    }
+}
+
+$mediaSync->logger->error('Show Addition Complete', false, true);
+
+?>

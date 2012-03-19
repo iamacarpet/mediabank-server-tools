@@ -1,0 +1,83 @@
+#!/usr/bin/php
+<?php
+
+require "/usr/share/mediabank/mediabank.php";
+
+$mediaSync = new MediaSync('rss');
+
+$mediaSync->logger->init('rss', '/var/log/mediabank-rss.log');
+
+// Time to re-do in seconds.
+$refresh_time = 900;
+
+require_once('/usr/share/mediabank/rss/lib/lastRSS.inc');
+
+$rss = new lastRSS;
+$rss->cache_dir = '';
+$rss->cache_time = 0;
+$rss->cp = 'US-ASCII';
+$rss->date_format = 'l';
+$rss->CDATA = 'content';
+
+$mediaSync->logger->error('Init RSS Engine');
+ 
+while (true){
+    $mediaSync->logger->error('  Start RSS Loop');
+    $starttime = time();
+    $sql = "SELECT ID, URL, DownloadTo FROM feeds WHERE Enabled = 1";
+    $query = mysql_query($sql, $mediaSync->db->db_conn) or $mediaSync->logger->error('  MySQL DB Error - Select Feeds - ' . mysql_error(), true);
+    while ($row = mysql_fetch_row($query)){
+        
+        $mediaSync->logger->error('  Starting with feed ID: ' . $row[0] . ' - ' . $row[1] . ' - Download To: ' . $row[2]);
+        $feed = $rss->get($row[1]);
+
+        foreach ($feed['items'] as $item){
+            //$mediaSync->logger->error('   Item: ' . $item['title']);
+            $sql = "SELECT ID FROM downloads WHERE URL = '" . mysql_escape_string($item['link']) . "'";
+            $query5 = mysql_query($sql, $mediaSync->db->db_conn) or $mediaSync->logger->error('    MySQL Error - Check if downloaded - ' . mysql_error());
+            if ($rty = mysql_fetch_row($query5)){
+                //$mediaSync->logger->error('    This has already been downloaded.');
+                continue;
+            }
+            $sql = "SELECT ID FROM fails WHERE URL = '" . mysql_escape_string($item['link']) . "'";
+            $query6 = mysql_query($sql, $mediaSync->db->db_conn) or $mediaSync->logger->error('    MySQL Error - Check if fail - ' . mysql_error());
+            if ($rty = mysql_fetch_row($query6)){
+                //$mediaSync->logger->error('    This has already been downloaded and failed');
+                continue;
+            }
+            $sql = "SELECT Filter FROM filters WHERE Enabled = 1";
+            $query2 = mysql_query($sql, $mediaSync->db->db_conn) or $mediaSync->logger->error('    MySQL Error - Select Filters - ' . mysql_error());
+            while ($row2 = mysql_fetch_row($query2)){
+                if (preg_match("'" . $row2[0] . "$'i", str_replace('.', ' ', $item['title']), $h)){
+                    if (!preg_match("'(.*)720p(.*)$'i", str_replace('.', ' ', $item['title']), $h)){
+                        $mediaSync->logger->error('  Item: ' . $item['title'] . ' - Found a match with: ' . $row2[0] . ' File - ' . $item['link']);
+                        // Download to watch folder here...
+                        if ($mediaSync->func->saveFile($item['link'], $row[2] . '/' . urldecode(basename($item['link'])))){
+                            $mediaSync->logger->error('    Downloading file completed.');
+                            $sql = "INSERT INTO downloads (URL) VALUES ('" . mysql_escape_string($item['link']) . "')";
+                        } else {
+                            $mediaSync->logger->error('    Downloading file failed');
+                            $sql = "INSERT INTO fails (URL) VALUES ('" . mysql_escape_string($item['link']) . "')";
+                        }
+                    
+                        $query8 = mysql_query($sql, $mediaSync->db->db_conn) or $mediaSync->logger->error('    MySQL Error - Check if fail - ' . mysql_error());
+                    
+                        break;
+                    }
+                }
+            }
+        }
+        unset($feed);
+    }
+    $finishtime = time();
+    $tto = $finishtime - $starttime;
+    if (($refresh_time - $tto) > 0){
+        //$mediaSync->logger->error('Sleeping for ' . ($refresh_time - $tto) . ' seconds');
+        sleep(($refresh_time - $tto));
+    } else {
+        //$mediaSync->logger->error('Sleeping for ' . $refresh_time . ' seconds');
+        sleep($refresh_time);
+    }
+}
+
+?>
