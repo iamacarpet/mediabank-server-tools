@@ -1,0 +1,82 @@
+<?php
+
+require "/usr/share/mediabank/mediabank.php";
+
+$mediaSync = new MediaSync('mborg');
+
+$mediaSync->logger->init('mborg', '/var/log/mediabank.log');
+
+if (!is_file($argv[1])){
+    $argv[1] = '/home/media/Downloads/' . $argv[1];
+    if (!is_file($argv[1])){
+        $mediaSync->logger->error('Can\'t find file: ' . $argv[1] , true, true);
+    }
+} else {
+    $argv[1] = realpath($argv[1]);
+}
+
+$ini = parse_ini_file("/etc/rss/mbaf/shows.ini", true, true) or $mediaSync->logger->error('Unable to parse ini file' , true, true);
+
+$filename = basename($argv[1]);
+
+$mediaSync->logger->error("Starting with filename: " . $filename, false, true);
+
+foreach ($ini as $k => $v){
+    if (preg_match("'" . $v['regex'] . "$'i", str_replace('.', ' ', $filename), $h)){
+
+        if (preg_match("'^(.+)S([0-9]+)E([0-9]+).*$'i",$filename,$n)){
+            $sname = preg_replace("'\.'"," ",$n[1]);
+            $season = intval($n[2],10);
+            $episode = intval($n[3],10);
+            $mediaSync->logger->error('   Found info: '. $sname . ' - Season ' . $season . ' - Episode ' . $episode, false, true);
+        } else if (preg_match("'^(.+)[ \.]([0-9]+)x([0-9]+).*$'i",$filename,$n)){
+            $sname = preg_replace("'\.'"," ",$n[1]);
+            $season = intval($n[2],10);
+            $episode = intval($n[3],10);
+            $mediaSync->logger->error('   Found info: ' . $sname . ' ' . $season . ' ' . $episode, false, true);
+        } else {
+            $mediaSync->logger->error('   Can\'t Decode Show Info From Filename', true, true);
+        }
+        
+        $sql = "SELECT ID FROM file_files WHERE FileLocation = '" . mysql_real_escape_string($argv[1]) . "' AND ServerID = '" . mysql_real_escape_string($mediaSync->conf->server) . "'";
+        $query = mysql_query($sql, $mediaSync->db->db_conn) or $mediaSync->logger->error('   Error Finding File in DB', true, true);
+        if (! $row = mysql_fetch_row($query)){
+            $mediaSync->logger->error('   File Doesn\'t Exist in DB', true, true);
+        }
+        $fileid = $row[0];
+        
+        if (@$v['path'] != ""){
+            if ($season < 10){
+                $seasonfolder = 'Season 0' . $season . '/';
+            } else {
+                $seasonfolder = 'Season ' . $season . '/';
+            }
+            
+            // We're going to move the files into this path...
+            if (substr($v['path'], -1) == '/'){
+                if (!is_dir($v['path'] . $seasonfolder)){
+                    mkdir($v['path'] . $seasonfolder, 0755) or $mediaSync->logger->error('   Unable to create season folder ' . $v['path'] . $seasonfolder, true, true);
+                }
+                $mediaSync->logger->error("   Moving file from " . $argv[1] . " to " . $v['path'] . $seasonfolder . $filename, false, true);
+                rename($argv[1], $v['path'] . $seasonfolder . $filename) or $mediaSync->logger->error('   Unable to move file to ' . $v['path'] . $seasonfolder . $filename, true, true);
+                $argv[1] = $v['path'] . $seasonfolder . $filename;
+            } else {
+                if (!is_dir($v['path'] . '/' . $seasonfolder)){
+                    mkdir($v['path'] . '/' . $seasonfolder, 0755) or $mediaSync->logger->error('   Unable to create season folder ' . $v['path'] . $seasonfolder, true, true);
+                }
+                $mediaSync->logger->error("   Moving file from " . $argv[1] . " to " . $v['path'] . '/' . $seasonfolder . $filename, false, true);
+                rename($argv[1], $v['path'] . '/' . $seasonfolder . $filename) or $mediaSync->logger->error('   Unable to move file to ' . $v['path'] . '/' . $seasonfolder . $filename, true, true);
+                $argv[1] = $v['path'] . '/' . $seasonfolder . $filename;
+            }
+        }
+
+        $sql = "UPDATE file_files SET FileLocation = '" . mysql_real_escape_string($argv[1]) . "' WHERE ID = '" . mysql_real_escape_string($fileid) . "'";
+        $query = mysql_query($sql, $mediaSync->db->db_conn) or $mediaSync->logger->error('   Error Updating Location in DB After Move', true, true);
+        
+        break;
+    }
+}
+
+$mediaSync->logger->error('Show Addition Complete', false, true);
+
+?>
